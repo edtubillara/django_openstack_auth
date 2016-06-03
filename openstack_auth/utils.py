@@ -20,6 +20,9 @@ from django.contrib import auth
 from django.contrib.auth import middleware
 from django.contrib.auth import models
 from django.utils import timezone
+from django.utils.translation import ugettext_lazy as _
+
+from keystoneauth1 import exceptions as keystone_exceptions
 from keystoneauth1.identity import v2 as v2_auth
 from keystoneauth1.identity import v3 as v3_auth
 from keystoneauth1 import session
@@ -28,6 +31,7 @@ from keystoneclient.v2_0 import client as client_v2
 from keystoneclient.v3 import client as client_v3
 from six.moves.urllib import parse as urlparse
 
+from openstack_auth import exceptions
 
 LOG = logging.getLogger(__name__)
 
@@ -143,11 +147,55 @@ def get_keystone_client():
         return client_v3
 
 
+def get_access_info(unscoped_auth):
+    session = get_session()
+    try:
+        unscoped_auth_ref = unscoped_auth.get_access(session)
+    except keystone_exceptions.ConnectFailure as exc:
+        LOG.error(str(exc))
+        msg = _('Unable to establish connection to keystone endpoint.')
+        raise exceptions.KeystoneAuthException(msg)
+    except (keystone_exceptions.Unauthorized,
+            keystone_exceptions.Forbidden,
+            keystone_exceptions.NotFound) as exc:
+        LOG.debug(str(exc))
+        raise exceptions.KeystoneAuthException(_('Invalid credentials.'))
+    except (keystone_exceptions.ClientException,
+            keystone_exceptions.AuthorizationFailure) as exc:
+        msg = _("An error occurred authenticating. "
+                "Please try again later.")
+        LOG.debug(str(exc))
+        raise exceptions.KeystoneAuthException(msg)
+    return unscoped_auth_ref
+
+
 def is_websso_enabled():
     """Websso is supported in Keystone version 3."""
     websso_enabled = getattr(settings, 'WEBSSO_ENABLED', False)
     keystonev3_plus = (get_keystone_version() >= 3)
     return websso_enabled and keystonev3_plus
+
+
+def is_k2k_federation_at_login_enabled():
+    """Check if K2K federation selection list at login is enabled.
+
+    Here are the example settings:
+    # Feature Flag, default is false
+    K2K_SELECTION_AT_LOGIN_ENABLED = True
+
+    # Initial choice, should be the idp id.
+    # If user selects the idp, then k2k authentication is skipped.
+    K2K_INITIAL_CHOICE = "local"
+
+    #Service Provider choices, value return should be SP ID
+    K2K_CHOICES = (
+        ("local", _("Identity Provider")),
+        ("k2kf-sp", _("Service_Provider k2kf-sp"))
+    )
+    """
+    k2k_enabled = getattr(settings, 'K2K_SELECTION_AT_LOGIN_ENABLED', False)
+    keystonev3_plus = (get_keystone_version() >= 3)
+    return k2k_enabled and keystonev3_plus
 
 
 def build_absolute_uri(request, relative_url):

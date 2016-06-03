@@ -45,7 +45,8 @@ class KeystoneBackend(object):
             plugins = getattr(
                 settings,
                 'AUTHENTICATION_PLUGINS',
-                ['openstack_auth.plugin.password.PasswordPlugin',
+                ['openstack_auth.plugin.k2k.K2KAuthPlugin',
+                 'openstack_auth.plugin.password.PasswordPlugin',
                  'openstack_auth.plugin.token.TokenPlugin'])
 
             self._auth_plugins = [import_string(p)() for p in plugins]
@@ -86,14 +87,13 @@ class KeystoneBackend(object):
     def authenticate(self, auth_url=None, **kwargs):
         """Authenticates a user via the Keystone Identity API."""
         LOG.debug('Beginning user authentication')
-
         if not auth_url:
             auth_url = settings.OPENSTACK_KEYSTONE_URL
-
         auth_url = utils.fix_auth_url_version(auth_url)
-
-        for plugin in self.auth_plugins:
-            unscoped_auth = plugin.get_plugin(auth_url=auth_url, **kwargs)
+        plugins = self.auth_plugins
+        for plugin in plugins:
+            unscoped_auth = plugin.get_plugin(
+                auth_url=auth_url, plugins=plugins, **kwargs)
 
             if unscoped_auth:
                 break
@@ -107,24 +107,10 @@ class KeystoneBackend(object):
 
         session = utils.get_session()
         keystone_client_class = utils.get_keystone_client().Client
+        unscoped_auth_ref = utils.get_access_info(unscoped_auth)
 
-        try:
-            unscoped_auth_ref = unscoped_auth.get_access(session)
-        except keystone_exceptions.ConnectFailure as exc:
-            LOG.error(str(exc))
-            msg = _('Unable to establish connection to keystone endpoint.')
-            raise exceptions.KeystoneAuthException(msg)
-        except (keystone_exceptions.Unauthorized,
-                keystone_exceptions.Forbidden,
-                keystone_exceptions.NotFound) as exc:
-            LOG.debug(str(exc))
-            raise exceptions.KeystoneAuthException(_('Invalid credentials.'))
-        except (keystone_exceptions.ClientException,
-                keystone_exceptions.AuthorizationFailure) as exc:
-            msg = _("An error occurred authenticating. "
-                    "Please try again later.")
-            LOG.debug(str(exc))
-            raise exceptions.KeystoneAuthException(msg)
+        # k2k federation changes the auth_url
+        auth_url = unscoped_auth.auth_url
 
         # Check expiry for our unscoped auth ref.
         self.check_auth_expiry(unscoped_auth_ref)

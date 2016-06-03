@@ -76,12 +76,21 @@ class Login(django_auth_forms.AuthenticationForm):
             self.fields['region'].initial = self.request.COOKIES.get(
                 'login_region')
 
+        if utils.is_k2k_federation_at_login_enabled():
+            initial = getattr(settings, 'K2K_INITIAL_CHOICE', 'local')
+            self.fields['service_provider'] = forms.ChoiceField(
+                label=_("Authenticate with Keystone to Keystone Federation"),
+                choices=getattr(settings, 'K2K_CHOICES', ()),
+                required=False,
+                initial=initial)
+            fields_ordering.insert(0, 'service_provider')
+
         # if websso is enabled and keystone version supported
         # prepend the websso_choices select input to the form
         if utils.is_websso_enabled():
             initial = getattr(settings, 'WEBSSO_INITIAL_CHOICE', 'credentials')
             self.fields['auth_type'] = forms.ChoiceField(
-                label=_("Authenticate using"),
+                label=_("Authenticate using SSO"),
                 choices=getattr(settings, 'WEBSSO_CHOICES', ()),
                 required=False,
                 initial=initial)
@@ -93,6 +102,7 @@ class Login(django_auth_forms.AuthenticationForm):
             msg = ("Websso is enabled but horizon is not configured to work " +
                    "with keystone version 3 or above.")
             LOG.warning(msg)
+
         self.fields = collections.OrderedDict(
             (key, self.fields[key]) for key in fields_ordering)
 
@@ -113,6 +123,7 @@ class Login(django_auth_forms.AuthenticationForm):
         password = self.cleaned_data.get('password')
         region = self.cleaned_data.get('region')
         domain = self.cleaned_data.get('domain', default_domain)
+        service_provider = self.cleaned_data.get('service_provider', None)
 
         if not (username and password):
             # Don't authenticate, just let the other validators handle it.
@@ -123,7 +134,8 @@ class Login(django_auth_forms.AuthenticationForm):
                                            username=username,
                                            password=password,
                                            user_domain_name=domain,
-                                           auth_url=region)
+                                           auth_url=region,
+                                           service_provider=service_provider)
             msg = 'Login successful for user "%(username)s".' % \
                 {'username': username}
             LOG.info(msg)
