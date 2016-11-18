@@ -33,6 +33,7 @@ LOG = logging.getLogger(__name__)
 
 _TOKEN_TIMEOUT_MARGIN = getattr(settings, 'TOKEN_TIMEOUT_MARGIN', 0)
 
+
 """
 We need the request object to get the user, so we'll slightly modify the
 existing django.contrib.auth.get_user method. To do so we update the
@@ -476,3 +477,36 @@ def get_admin_permissions():
         }
     """
     return {get_role_permission(role) for role in get_admin_roles()}
+
+
+def store_initial_k2k_session(auth_url, request, scoped_auth_ref,
+                              unscoped_auth_ref):
+    keystone_provider_id = request.session.get('keystone_provider_id', None)
+    if keystone_provider_id:
+        return None
+
+    providers = getattr(scoped_auth_ref, 'service_providers', None)
+    if providers:
+        providers = getattr(providers, '_service_providers', None)
+
+    if providers:
+        keystone_idp_name = getattr(settings, 'KEYSTONE_PROVIDER_IDP_NAME',
+                                    'Local Keystone')
+        keystone_idp_id = getattr(
+            settings, 'KEYSTONE_PROVIDER_IDP_ID', 'localkeystone')
+        keystone_identity_provider = {'name': keystone_idp_name,
+                                      'id': keystone_idp_id}
+        # (edtubill) We will use the IDs as the display names
+        # We may want to be able to set display names in the future.
+        keystone_providers = [
+            {'name': provider_id, 'id': provider_id}
+            for provider_id in providers]
+
+        keystone_providers.append(keystone_identity_provider)
+
+        # We treat the Keystone idp ID as None
+        request.session['keystone_provider_id'] = keystone_idp_id
+        request.session['keystone_providers'] = keystone_providers
+        request.session['k2k_base_unscoped_token'] =\
+            unscoped_auth_ref.auth_token
+        request.session['k2k_auth_url'] = auth_url

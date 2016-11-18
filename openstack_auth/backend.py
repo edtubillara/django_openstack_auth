@@ -190,6 +190,8 @@ class KeystoneBackend(object):
             services_region=region_name)
 
         if request is not None:
+            utils.store_initial_k2k_session(auth_url, request, scoped_auth_ref,
+                                            unscoped_auth_ref)
             request.session['unscoped_token'] = unscoped_token
             if domain_auth_ref:
                 # check django session engine, if using cookies, this will not
